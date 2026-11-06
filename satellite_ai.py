@@ -1,98 +1,77 @@
-import os
-import numpy as np
+import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 
 from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
-    classification_report,
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
     confusion_matrix,
     ConfusionMatrixDisplay
 )
-from sklearn.preprocessing import StandardScaler
 
-
-# ==========================================
-# 1. CONFIGURATION
-# ==========================================
-
-RANDOM_STATE = 42
-N_NORMAL = 2000
-N_ATTACK = 200
-
-os.makedirs("results", exist_ok=True)
-
-np.random.seed(RANDOM_STATE)
-
-
-# ==========================================
-# 2. SIMULATE SATELLITE NETWORK TELEMETRY
-# ==========================================
-
-def generate_normal_telemetry(n):
-    """Generate simulated normal satellite telemetry."""
-
-    data = {
-        "packet_rate": np.random.normal(100, 15, n),
-        "bandwidth_mbps": np.random.normal(20, 4, n),
-        "latency_ms": np.random.normal(150, 20, n),
-        "packet_loss": np.random.normal(0.5, 0.2, n),
-        "cpu_usage": np.random.normal(45, 10, n),
-        "memory_usage": np.random.normal(50, 10, n),
-        "failed_auth": np.random.poisson(0.2, n),
-        "command_rate": np.random.normal(10, 2, n)
-    }
-
-    df = pd.DataFrame(data)
-
-    # Keep simulated values within reasonable limits
-    df["packet_rate"] = df["packet_rate"].clip(1, 250)
-    df["bandwidth_mbps"] = df["bandwidth_mbps"].clip(1, 100)
-    df["latency_ms"] = df["latency_ms"].clip(50, 500)
-    df["packet_loss"] = df["packet_loss"].clip(0, 5)
-    df["cpu_usage"] = df["cpu_usage"].clip(0, 100)
-    df["memory_usage"] = df["memory_usage"].clip(0, 100)
-    df["command_rate"] = df["command_rate"].clip(0, 50)
-
-    return df
-
-
-def generate_anomalous_telemetry(n):
-    """Generate simulated abnormal network behavior."""
-
-    data = {
-        "packet_rate": np.random.normal(350, 40, n),
-        "bandwidth_mbps": np.random.normal(75, 10, n),
-        "latency_ms": np.random.normal(450, 50, n),
-        "packet_loss": np.random.normal(8, 2, n),
-        "cpu_usage": np.random.normal(90, 5, n),
-        "memory_usage": np.random.normal(90, 5, n),
-        "failed_auth": np.random.poisson(12, n),
-        "command_rate": np.random.normal(60, 10, n)
-    }
-
-    return pd.DataFrame(data).clip(lower=0)
-
-
-# ==========================================
-# 3. CREATE DATASET
-# ==========================================
-
-normal_data = generate_normal_telemetry(N_NORMAL)
-attack_data = generate_anomalous_telemetry(N_ATTACK)
-
-normal_data["actual_label"] = 0
-attack_data["actual_label"] = 1
-
-dataset = pd.concat(
-    [normal_data, attack_data],
-    ignore_index=True
+st.set_page_config(
+    page_title="Satellite AI Cybersecurity",
+    page_icon="🛰️",
+    layout="wide"
 )
 
-dataset = dataset.sample(
-    frac=1,
-    random_state=RANDOM_STATE
-).reset_index(drop=True)
+st.title("🛰️ AI-Based Satellite Cybersecurity System")
+st.caption("Machine Learning | Satellite IoT | Network Anomaly Detection")
+
+st.info(
+    "Research prototype using simulated satellite telemetry. "
+    "It does not connect to real satellites."
+)
+
+# -------------------------------
+# Generate simulated telemetry
+# -------------------------------
+
+@st.cache_data
+def generate_data(n_normal=2000, n_attack=200, seed=42):
+    rng = np.random.default_rng(seed)
+
+    normal = pd.DataFrame({
+        "packet_rate": rng.normal(100, 15, n_normal),
+        "bandwidth_mbps": rng.normal(20, 4, n_normal),
+        "latency_ms": rng.normal(150, 20, n_normal),
+        "packet_loss": rng.normal(0.5, 0.2, n_normal),
+        "cpu_usage": rng.normal(45, 10, n_normal),
+        "memory_usage": rng.normal(50, 10, n_normal),
+        "failed_auth": rng.poisson(0.2, n_normal),
+        "command_rate": rng.normal(10, 2, n_normal)
+    })
+
+    attack = pd.DataFrame({
+        "packet_rate": rng.normal(350, 40, n_attack),
+        "bandwidth_mbps": rng.normal(75, 10, n_attack),
+        "latency_ms": rng.normal(450, 50, n_attack),
+        "packet_loss": rng.normal(8, 2, n_attack),
+        "cpu_usage": rng.normal(90, 5, n_attack),
+        "memory_usage": rng.normal(90, 5, n_attack),
+        "failed_auth": rng.poisson(12, n_attack),
+        "command_rate": rng.normal(60, 10, n_attack)
+    })
+
+    normal["actual_label"] = 0
+    attack["actual_label"] = 1
+
+    return pd.concat(
+        [normal, attack],
+        ignore_index=True
+    ).sample(frac=1, random_state=seed).reset_index(drop=True), normal
+
+
+# -------------------------------
+# Train anomaly detection model
+# -------------------------------
+
+data, normal_data = generate_data()
 
 features = [
     "packet_rate",
@@ -105,92 +84,60 @@ features = [
     "command_rate"
 ]
 
-X = dataset[features]
-y_true = dataset["actual_label"]
-
-
-# ==========================================
-# 4. TRAIN AI ANOMALY DETECTION MODEL
-# ==========================================
-
-# Train only on normal telemetry
-X_train = normal_data[features]
-
 scaler = StandardScaler()
 
-X_train_scaled = scaler.fit_transform(X_train)
-X_all_scaled = scaler.transform(X)
+X_train = scaler.fit_transform(normal_data[features])
+X_all = scaler.transform(data[features])
 
 model = IsolationForest(
     n_estimators=200,
     contamination=0.08,
-    random_state=RANDOM_STATE
+    random_state=42
 )
 
-model.fit(X_train_scaled)
+model.fit(X_train)
+
+data["predicted_label"] = (
+    model.predict(X_all) == -1
+).astype(int)
+
+data["anomaly_score"] = -model.decision_function(X_all)
 
 
-# ==========================================
-# 5. DETECT ANOMALIES
-# ==========================================
+# -------------------------------
+# Security alerts
+# -------------------------------
 
-# Isolation Forest:
-#  1 = normal
-# -1 = anomaly
-
-predictions = model.predict(X_all_scaled)
-
-# Convert to:
-# 0 = normal
-# 1 = anomaly
-
-dataset["predicted_label"] = np.where(
-    predictions == -1, 1, 0
-)
-
-dataset["anomaly_score"] = -model.decision_function(
-    X_all_scaled
-)
-
-
-# ==========================================
-# 6. SECURITY ALERT CLASSIFICATION
-# ==========================================
-
-def generate_alert(row):
-
+def security_alert(row):
     alerts = []
 
     if row["packet_rate"] > 250:
-        alerts.append("Unusual Packet Rate")
+        alerts.append("Unusual packet rate")
 
     if row["latency_ms"] > 350:
-        alerts.append("High Network Latency")
+        alerts.append("High latency")
 
     if row["packet_loss"] > 5:
-        alerts.append("High Packet Loss")
+        alerts.append("High packet loss")
 
     if row["failed_auth"] > 5:
-        alerts.append("Repeated Failed Authentication")
+        alerts.append("Repeated failed authentication")
 
     if row["command_rate"] > 40:
-        alerts.append("Abnormal Command Rate")
+        alerts.append("Abnormal command rate")
 
     if row["cpu_usage"] > 85:
-        alerts.append("High CPU Usage")
+        alerts.append("High CPU usage")
 
     if row["memory_usage"] > 85:
-        alerts.append("High Memory Usage")
+        alerts.append("High memory usage")
 
-    if alerts:
-        return ", ".join(alerts)
-
-    return "AI Anomaly Detected"
+    return ", ".join(alerts) if alerts else "AI anomaly detected"
 
 
-dataset["security_alert"] = dataset.apply(
+data["security_alert"] = data.apply(
     lambda row: (
-        generate_alert(row)
+        security_alert(row)
         if row["predicted_label"] == 1
         else "Normal"
     ),
@@ -198,125 +145,110 @@ dataset["security_alert"] = dataset.apply(
 )
 
 
-# ==========================================
-# 7. SAVE RESULTS
-# ==========================================
+# -------------------------------
+# Dashboard metrics
+# -------------------------------
 
-dataset.to_csv(
-    "results/satellite_security_results.csv",
-    index=False
+st.subheader("📊 Security Overview")
+
+total = len(data)
+detected = int(data["predicted_label"].sum())
+normal_count = total - detected
+
+c1, c2, c3, c4 = st.columns(4)
+
+c1.metric("Total Records", f"{total:,}")
+c2.metric("Detected Anomalies", f"{detected:,}")
+c3.metric("Normal Records", f"{normal_count:,}")
+c4.metric(
+    "Detection Rate",
+    f"{detected / total * 100:.1f}%"
 )
 
-print("\n===================================")
-print(" SATELLITE AI CYBERSECURITY SYSTEM")
-print("===================================")
+# -------------------------------
+# Model evaluation
+# -------------------------------
 
-print("\nTotal telemetry records:", len(dataset))
+y_true = data["actual_label"]
+y_pred = data["predicted_label"]
 
-print(
-    "\nDetected anomalies:",
-    int(dataset["predicted_label"].sum())
-)
+st.subheader("🎯 Model Evaluation")
 
-print(
-    "Normal records:",
-    int((dataset["predicted_label"] == 0).sum())
-)
+m1, m2, m3, m4 = st.columns(4)
 
-print("\nClassification Report:")
+m1.metric("Accuracy", f"{accuracy_score(y_true, y_pred):.3f}")
+m2.metric("Precision", f"{precision_score(y_true, y_pred, zero_division=0):.3f}")
+m3.metric("Recall", f"{recall_score(y_true, y_pred, zero_division=0):.3f}")
+m4.metric("F1 Score", f"{f1_score(y_true, y_pred, zero_division=0):.3f}")
 
-print(
-    classification_report(
-        y_true,
-        dataset["predicted_label"],
-        target_names=["Normal", "Anomaly"],
-        zero_division=0
-    )
-)
+# -------------------------------
+# Confusion matrix
+# -------------------------------
 
+st.subheader("Confusion Matrix")
 
-# ==========================================
-# 8. CONFUSION MATRIX
-# ==========================================
+fig, ax = plt.subplots()
 
-cm = confusion_matrix(
-    y_true,
-    dataset["predicted_label"]
-)
-
-display = ConfusionMatrixDisplay(
-    confusion_matrix=cm,
+ConfusionMatrixDisplay(
+    confusion_matrix=confusion_matrix(y_true, y_pred),
     display_labels=["Normal", "Anomaly"]
-)
+).plot(ax=ax, cmap="Blues", colorbar=False)
 
-display.plot(cmap="Blues")
+st.pyplot(fig)
+plt.close(fig)
 
-plt.title("Satellite Cybersecurity - AI Detection")
-plt.tight_layout()
+# -------------------------------
+# Anomaly score chart
+# -------------------------------
 
-plt.savefig("results/confusion_matrix.png")
-plt.show()
+st.subheader("Anomaly Score Distribution")
 
+fig, ax = plt.subplots()
 
-# ==========================================
-# 9. ANOMALY SCORE VISUALIZATION
-# ==========================================
+for label, name in [(0, "Normal"), (1, "Simulated anomaly")]:
+    ax.hist(
+        data.loc[data["actual_label"] == label, "anomaly_score"],
+        bins=30,
+        alpha=0.6,
+        label=name
+    )
 
-plt.figure(figsize=(12, 5))
+ax.set_xlabel("Anomaly Score")
+ax.set_ylabel("Number of Records")
+ax.legend()
 
-plt.hist(
-    dataset.loc[
-        dataset["actual_label"] == 0,
-        "anomaly_score"
-    ],
-    bins=40,
-    alpha=0.6,
-    label="Normal Telemetry"
-)
+st.pyplot(fig)
+plt.close(fig)
 
-plt.hist(
-    dataset.loc[
-        dataset["actual_label"] == 1,
-        "anomaly_score"
-    ],
-    bins=40,
-    alpha=0.6,
-    label="Simulated Anomalies"
-)
+# -------------------------------
+# Security alerts
+# -------------------------------
 
-plt.xlabel("AI Anomaly Score")
-plt.ylabel("Frequency")
-plt.title("Satellite Network Anomaly Detection")
+st.subheader("🚨 Detected Security Alerts")
 
-plt.legend()
-plt.tight_layout()
+alerts = data[data["predicted_label"] == 1].copy()
 
-plt.savefig("results/anomaly_scores.png")
-plt.show()
-
-
-# ==========================================
-# 10. DISPLAY SECURITY ALERTS
-# ==========================================
-
-anomalies = dataset[
-    dataset["predicted_label"] == 1
-]
-
-print("\n===== SECURITY ALERTS =====")
-
-print(
-    anomalies[
-        [
-            "packet_rate",
-            "latency_ms",
-            "packet_loss",
-            "failed_auth",
-            "command_rate",
+st.dataframe(
+    alerts[
+        features + [
             "anomaly_score",
             "security_alert"
         ]
-    ].head(20).to_string(index=False)
+    ].head(100),
+    use_container_width=True
 )
 
-print("\nResults saved in the results/ directory.")
+# -------------------------------
+# Download CSV
+# -------------------------------
+
+csv = data.to_csv(index=False).encode("utf-8")
+
+st.download_button(
+    label="⬇️ Download Detection Results (CSV)",
+    data=csv,
+    file_name="satellite_security_results.csv",
+    mime="text/csv"
+)
+
+st.success("Satellite AI Cybersecurity dashboard is running.")
